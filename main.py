@@ -5,6 +5,8 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime
 import uuid
 from collections import defaultdict
+import json
+from pathlib import Path
 
 
 app = FastAPI(
@@ -118,11 +120,71 @@ class MonthlySummaryItem(BaseModel):
     loss: float
     net: float
 
+# ==================== Data Persistence ====================
+DATA_DIR = Path("data")
+DATA_DIR.mkdir(exist_ok=True)
+
+STOCKS_FILE = DATA_DIR / "stocks.json"
+TRADES_FILE = DATA_DIR / "trades.json"
+COLUMNS_FILE = DATA_DIR / "columns.json"
+
 # ==================== In-Memory Storage ====================
 stocks_db: Dict[str, Stock] = {}
 trades_db: Dict[str, Trade] = {}
 columns_db: Dict[str, Column] = {}
 column_id_counter: int = 0  # Counter for sequential column IDs
+
+# ==================== Persistence Functions ====================
+def save_stocks():
+    """Save stocks to JSON file"""
+    stocks_data = {sid: stock.dict() for sid, stock in stocks_db.items()}
+    with open(STOCKS_FILE, "w") as f:
+        json.dump(stocks_data, f, indent=2)
+
+def load_stocks():
+    """Load stocks from JSON file"""
+    global stocks_db
+    if STOCKS_FILE.exists():
+        with open(STOCKS_FILE, "r") as f:
+            stocks_data = json.load(f)
+            for sid, stock_dict in stocks_data.items():
+                stocks_db[sid] = Stock(**stock_dict)
+
+def save_trades():
+    """Save trades to JSON file"""
+    trades_data = {tid: trade.dict() for tid, trade in trades_db.items()}
+    with open(TRADES_FILE, "w") as f:
+        json.dump(trades_data, f, indent=2)
+
+def load_trades():
+    """Load trades from JSON file"""
+    global trades_db
+    if TRADES_FILE.exists():
+        with open(TRADES_FILE, "r") as f:
+            trades_data = json.load(f)
+            for tid, trade_dict in trades_data.items():
+                trades_db[tid] = Trade(**trade_dict)
+
+def save_columns():
+    """Save columns to JSON file"""
+    columns_data = {cid: column.dict() for cid, column in columns_db.items()}
+    with open(COLUMNS_FILE, "w") as f:
+        json.dump(columns_data, f, indent=2)
+
+def load_columns():
+    """Load columns from JSON file"""
+    global columns_db, column_id_counter
+    if COLUMNS_FILE.exists():
+        with open(COLUMNS_FILE, "r") as f:
+            columns_data = json.load(f)
+            for cid, column_dict in columns_data.items():
+                columns_db[cid] = Column(**column_dict)
+                # Update counter based on loaded column IDs
+                try:
+                    col_num = int(cid.split("-")[1])
+                    column_id_counter = max(column_id_counter, col_num + 1)
+                except:
+                    pass
 
 # Initialize default columns
 def initialize_default_columns():
@@ -153,7 +215,15 @@ def initialize_default_columns():
 @app.on_event("startup")
 def startup_event():
     """Initialize on app startup"""
-    initialize_default_columns()
+    # Load existing data from files
+    load_stocks()
+    load_trades()
+    load_columns()
+    
+    # If no columns exist, create defaults
+    if not columns_db:
+        initialize_default_columns()
+        save_columns()
 
 # ==================== Helper Functions ====================
 def calculate_profit_loss(entry_price: Optional[float], quantity: Optional[float], sell_price: Optional[float]) -> tuple[Optional[float], Optional[float]]:
@@ -211,6 +281,7 @@ def add_stock(stock_data: StockCreateRequest):
         created_at=datetime.now().isoformat()
     )
     stocks_db[stock_id] = new_stock
+    save_stocks()
     return new_stock
 
 @app.get("/api/stocks", response_model=List[Stock])
@@ -232,6 +303,8 @@ def delete_stock(stock_id: str):
     for tid in trades_to_delete:
         trades_db.pop(tid)
     
+    save_stocks()
+    save_trades()
     return {"message": f"Stock {deleted_stock.name} deleted successfully", "stock_id": stock_id}
 
 # ==================== Trade Endpoints ====================
@@ -264,6 +337,7 @@ def add_trade(trade_data: TradeCreateRequest):
         created_at=datetime.now().isoformat()
     )
     trades_db[trade_id] = new_trade
+    save_trades()
     return new_trade
 
 @app.get("/api/trades", response_model=List[Trade])
@@ -303,6 +377,7 @@ def update_trade(trade_id: str, trade_data: TradeUpdateRequest):
     existing_trade.profit = profit
     existing_trade.loss = loss
     
+    save_trades()
     return existing_trade
 
 @app.delete("/api/trades/{trade_id}")
@@ -312,6 +387,7 @@ def delete_trade(trade_id: str):
         raise HTTPException(status_code=404, detail="Trade not found")
     
     deleted_trade = trades_db.pop(trade_id)
+    save_trades()
     return {"message": "Trade deleted successfully", "trade_id": trade_id}
 
 # ==================== Column Endpoints ====================
@@ -331,6 +407,7 @@ def add_column(column_data: ColumnCreateRequest):
         created_at=datetime.now().isoformat()
     )
     columns_db[column_id] = new_column
+    save_columns()
     return new_column
 
 @app.get("/api/columns", response_model=List[Column])
@@ -359,6 +436,7 @@ def update_column(column_id: str, column_data: ColumnUpdateRequest):
         if hasattr(existing_column, field):
             setattr(existing_column, field, value)
     
+    save_columns()
     return existing_column
 
 @app.delete("/api/columns/{column_id}")
@@ -368,6 +446,7 @@ def delete_column(column_id: str):
         raise HTTPException(status_code=404, detail="Column not found")
     
     deleted_column = columns_db.pop(column_id)
+    save_columns()
     return {"message": "Column deleted successfully", "column_id": column_id}
 
 # ==================== Proxy Column Endpoints ====================
@@ -388,6 +467,7 @@ def update_column_proxy(column_id: str, column_data: ColumnProxyUpdateRequest):
     if column_data.position is not None:
         existing_column.position = column_data.position
     
+    save_columns()
     return existing_column
 
 # ==================== Summary Endpoints ====================

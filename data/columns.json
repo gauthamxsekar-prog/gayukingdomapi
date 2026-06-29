@@ -1,0 +1,50 @@
+{
+  "col-0": {
+    "id": "col-0",
+    "position": 0,
+    "label": "Date",
+    "col_type": "date",
+    "field": null,
+    "created_at": "2026-06-30T02:06:50.281207"
+  },
+  "col-1": {
+    "id": "col-1",
+    "position": 1,
+    "label": "Entry Price",
+    "col_type": "number",
+    "field": null,
+    "created_at": "2026-06-30T02:06:50.281253"
+  },
+  "col-2": {
+    "id": "col-2",
+    "position": 2,
+    "label": "Quantity",
+    "col_type": "number",
+    "field": null,
+    "created_at": "2026-06-30T02:06:50.281261"
+  },
+  "col-3": {
+    "id": "col-3",
+    "position": 3,
+    "label": "Sell Price",
+    "col_type": "number",
+    "field": null,
+    "created_at": "2026-06-30T02:06:50.281269"
+  },
+  "col-4": {
+    "id": "col-4",
+    "position": 4,
+    "label": "Profit",
+    "col_type": "number",
+    "field": null,
+    "created_at": "2026-06-30T02:06:50.281276"
+  },
+  "col-5": {
+    "id": "col-5",
+    "position": 5,
+    "label": "Loss",
+    "col_type": "number",
+    "field": null,
+    "created_at": "2026-06-30T02:06:50.281280"
+  }
+}
