@@ -1,0 +1,30 @@
+{
+  "5a111f1a-cea0-4bc6-bccb-f08fc0a52319": {
+    "id": "5a111f1a-cea0-4bc6-bccb-f08fc0a52319",
+    "name": "Gold",
+    "symbol": "Gold",
+    "sort_order": 0,
+    "created_at": "2026-07-01T21:54:27.850465"
+  },
+  "2cbf5bd3-8373-4e32-a9f4-abf245910e28": {
+    "id": "2cbf5bd3-8373-4e32-a9f4-abf245910e28",
+    "name": "Silver",
+    "symbol": "Silver",
+    "sort_order": 0,
+    "created_at": "2026-07-01T21:54:52.878896"
+  },
+  "5301030c-d9dc-4193-8f19-36a39124d851": {
+    "id": "5301030c-d9dc-4193-8f19-36a39124d851",
+    "name": "ITC",
+    "symbol": "ITC",
+    "sort_order": 0,
+    "created_at": "2026-07-01T21:55:12.917575"
+  },
+  "6213fbed-10ac-472d-9814-10f7a56c4344": {
+    "id": "6213fbed-10ac-472d-9814-10f7a56c4344",
+    "name": "Test Stock",
+    "symbol": "TST",
+    "sort_order": 0,
+    "created_at": "2026-07-01T22:01:48.191397"
+  }
+}

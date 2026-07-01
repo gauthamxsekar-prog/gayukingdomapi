@@ -3,10 +3,16 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 from datetime import datetime
+import os
 import uuid
 from collections import defaultdict
 import json
 from pathlib import Path
+
+try:
+    from dotenv import load_dotenv
+except Exception:  # pragma: no cover - optional dependency fallback
+    load_dotenv = None
 
 
 app = FastAPI(
@@ -121,8 +127,12 @@ class MonthlySummaryItem(BaseModel):
     net: float
 
 # ==================== Data Persistence ====================
-DATA_DIR = Path("data")
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
+
+if load_dotenv is not None:
+    load_dotenv(BASE_DIR / ".env", override=False)
 
 STOCKS_FILE = DATA_DIR / "stocks.json"
 TRADES_FILE = DATA_DIR / "trades.json"
@@ -135,56 +145,159 @@ columns_db: Dict[str, Column] = {}
 column_id_counter: int = 0  # Counter for sequential column IDs
 
 # ==================== Persistence Functions ====================
-def save_stocks():
-    """Save stocks to JSON file"""
-    stocks_data = {sid: stock.dict() for sid, stock in stocks_db.items()}
-    with open(STOCKS_FILE, "w") as f:
-        json.dump(stocks_data, f, indent=2)
+def get_mongo_config() -> tuple[Optional[str], str]:
+    """Return the configured MongoDB URI and database name."""
+    mongo_uri = os.getenv("MONGODB_URI") or os.getenv("MONGO_URI") or "mongodb://localhost:27017/"
+    db_name = os.getenv("MONGODB_DB") or os.getenv("MONGO_DB") or "gayukingdomdb"
+    return mongo_uri, db_name
 
-def load_stocks():
-    """Load stocks from JSON file"""
-    global stocks_db
-    if STOCKS_FILE.exists():
+
+def _get_mongo_connection():
+    """Return a MongoDB client when a connection string is configured."""
+    mongo_uri, _ = get_mongo_config()
+    if not mongo_uri:
+        return None
+
+    try:
+        from pymongo import MongoClient
+    except Exception:
+        return None
+
+    try:
+        client = MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
+        client.admin.command("ping")
+        return client
+    except Exception:
+        try:
+            client.close()
+        except Exception:
+            pass
+        return None
+
+
+def _get_mongo_collection(collection_name: str):
+    """Return a MongoDB collection and client for the configured database."""
+    mongo_uri, db_name = get_mongo_config()
+    if not mongo_uri:
+        return None, None
+
+    try:
+        from pymongo import MongoClient
+    except Exception:
+        return None, None
+
+    try:
+        client = MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
+        client.admin.command("ping")
+    except Exception:
+        try:
+            client.close()
+        except Exception:
+            pass
+        return None, None
+
+    return client[db_name][collection_name], client
+
+
+def _save_collection_items(collection_name: str, items: Dict[str, Any]) -> None:
+    """Persist items to MongoDB when available, otherwise fall back to JSON."""
+    collection, client = _get_mongo_collection(collection_name)
+    if collection is not None and client is not None:
+        try:
+            collection.delete_many({})
+            docs = [{"_id": item_id, "data": item_data} for item_id, item_data in items.items()]
+            if docs:
+                collection.insert_many(docs)
+        finally:
+            client.close()
+        return
+
+    if collection_name == "stocks":
+        with open(STOCKS_FILE, "w") as f:
+            json.dump(items, f, indent=2)
+    elif collection_name == "trades":
+        with open(TRADES_FILE, "w") as f:
+            json.dump(items, f, indent=2)
+    else:
+        with open(COLUMNS_FILE, "w") as f:
+            json.dump(items, f, indent=2)
+
+
+def _load_collection_items(collection_name: str, model_cls):
+    """Load items from MongoDB when available, otherwise from JSON."""
+    collection, client = _get_mongo_collection(collection_name)
+    if collection is not None and client is not None:
+        try:
+            docs = list(collection.find({}))
+            result = {}
+            for doc in docs:
+                item_id = str(doc.get("_id"))
+                payload = doc.get("data", {})
+                result[item_id] = model_cls(**payload)
+            return result
+        finally:
+            client.close()
+
+    if collection_name == "stocks":
+        if not STOCKS_FILE.exists():
+            return {}
         with open(STOCKS_FILE, "r") as f:
             stocks_data = json.load(f)
-            for sid, stock_dict in stocks_data.items():
-                stocks_db[sid] = Stock(**stock_dict)
+        return {sid: model_cls(**stock_dict) for sid, stock_dict in stocks_data.items()}
 
-def save_trades():
-    """Save trades to JSON file"""
-    trades_data = {tid: trade.dict() for tid, trade in trades_db.items()}
-    with open(TRADES_FILE, "w") as f:
-        json.dump(trades_data, f, indent=2)
-
-def load_trades():
-    """Load trades from JSON file"""
-    global trades_db
-    if TRADES_FILE.exists():
+    if collection_name == "trades":
+        if not TRADES_FILE.exists():
+            return {}
         with open(TRADES_FILE, "r") as f:
             trades_data = json.load(f)
-            for tid, trade_dict in trades_data.items():
-                trades_db[tid] = Trade(**trade_dict)
+        return {tid: model_cls(**trade_dict) for tid, trade_dict in trades_data.items()}
 
-def save_columns():
-    """Save columns to JSON file"""
-    columns_data = {cid: column.dict() for cid, column in columns_db.items()}
-    with open(COLUMNS_FILE, "w") as f:
-        json.dump(columns_data, f, indent=2)
+    if not COLUMNS_FILE.exists():
+        return {}
+    with open(COLUMNS_FILE, "r") as f:
+        columns_data = json.load(f)
+    return {cid: model_cls(**column_dict) for cid, column_dict in columns_data.items()}
 
-def load_columns():
-    """Load columns from JSON file"""
+
+def save_stocks() -> None:
+    """Save stocks to MongoDB when configured, otherwise to a JSON file."""
+    _save_collection_items("stocks", {sid: stock.dict() for sid, stock in stocks_db.items()})
+
+
+def load_stocks() -> None:
+    """Load stocks from MongoDB when configured, otherwise from a JSON file."""
+    global stocks_db
+    stocks_db = _load_collection_items("stocks", Stock)
+
+
+def save_trades() -> None:
+    """Save trades to MongoDB when configured, otherwise to a JSON file."""
+    _save_collection_items("trades", {tid: trade.dict() for tid, trade in trades_db.items()})
+
+
+def load_trades() -> None:
+    """Load trades from MongoDB when configured, otherwise from a JSON file."""
+    global trades_db
+    trades_db = _load_collection_items("trades", Trade)
+
+
+def save_columns() -> None:
+    """Save columns to MongoDB when configured, otherwise to a JSON file."""
+    _save_collection_items("columns", {cid: column.dict() for cid, column in columns_db.items()})
+
+
+def load_columns() -> None:
+    """Load columns from MongoDB when configured, otherwise from a JSON file."""
     global columns_db, column_id_counter
-    if COLUMNS_FILE.exists():
-        with open(COLUMNS_FILE, "r") as f:
-            columns_data = json.load(f)
-            for cid, column_dict in columns_data.items():
-                columns_db[cid] = Column(**column_dict)
-                # Update counter based on loaded column IDs
-                try:
-                    col_num = int(cid.split("-")[1])
-                    column_id_counter = max(column_id_counter, col_num + 1)
-                except:
-                    pass
+    loaded_columns = _load_collection_items("columns", Column)
+    columns_db = loaded_columns
+    column_id_counter = 0
+    for cid in columns_db.keys():
+        try:
+            col_num = int(cid.split("-")[1])
+            column_id_counter = max(column_id_counter, col_num + 1)
+        except Exception:
+            pass
 
 # Initialize default columns
 def initialize_default_columns():
@@ -546,6 +659,27 @@ def get_sample_data():
         ],
         "total": 3,
         "timestamp": "2024-01-01T00:00:00Z"
+    }
+
+
+@app.get("/api/health")
+def health_check():
+    mongo_client = _get_mongo_connection()
+    mongo_ready = False
+    if mongo_client is not None:
+        try:
+            mongo_client.admin.command("ping")
+            mongo_ready = True
+        except Exception:
+            mongo_ready = False
+        finally:
+            mongo_client.close()
+
+    return {
+        "status": "ok",
+        "storage": "mongodb" if mongo_ready else "json",
+        "mongodb_ready": mongo_ready,
+        "database": os.getenv("MONGODB_DB") or os.getenv("MONGO_DB") or "gayukingdomdb",
     }
 
 
